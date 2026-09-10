@@ -1,22 +1,24 @@
 #include <cstdio>
 #include "server.hh"
-#include "threadPool.hh"
+#include "epollReactor.hh"
 #include <cstring>
 #include <csignal>
 #include <mutex>
 #include <thread>
 #include <string>
+#include <vector>
+#include <memory>
 
 namespace {
     std::mutex logMutex;
 }
 
-static void logLine(const std::string& line){
+void logLine(const std::string& line){
     std::lock_guard<std::mutex> lock(logMutex);
     fprintf(stderr, "%s\n", line.c_str());
 }
 
-static std::string buildResponse(int statusCode, const std::string& statusText, const std::string& body, const std::string& contentType = "text/plain"){
+std::string buildResponse(int statusCode, const std::string& statusText, const std::string& body, const std::string& contentType){
     std::string response = "HTTP/1.1 " + std::to_string(statusCode) + " " + statusText + "\r\n";
     response += "Content-Type: " + contentType + "\r\n";
     response += "Content-Length: " + std::to_string(body.size()) + "\r\n";
@@ -53,37 +55,6 @@ std::string processHttpRequest(const httpRequest& req, const httpParser& parser)
     }
 
     return buildResponse(501, "Not Implemented", "Unsupported method: " + method + "\n");
-}
-
-// Runs on a worker thread. Owns clientFd exclusively for its whole lifetime —
-// nothing else touches this fd, so the parser/request state needs no locking.
-void handleConnection(int clientFd){
-    httpRequest req;
-    httpParser parser;
-
-    while(parser.state != parseState::complete && parser.state != parseState::error){
-        int ret = parser.feed(clientFd, req);
-        if(ret <= 0){
-            close(clientFd);
-            return;
-        }
-    }
-
-    std::string response = (parser.state == parseState::error)
-        ? buildResponse(400, "Bad Request", "Malformed request\n")
-        : processHttpRequest(req, parser);
-
-    size_t totalSent = 0;
-    while(totalSent < response.size()){
-        ssize_t sent = send(clientFd, response.data() + totalSent, response.size() - totalSent, 0);
-        if(sent <= 0){
-            logLine("Error writing to socket (fd " + std::to_string(clientFd) + ")");
-            break;
-        }
-        totalSent += (size_t)sent;
-    }
-
-    close(clientFd);
 }
 
 static int acceptConnection(int serverSocket){
@@ -126,17 +97,28 @@ int main(){
         return 1;
     }
 
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    if(numThreads == 0) numThreads = 4;
-    ThreadPool pool(numThreads); //Create 4 new threads to check for connections on
+    unsigned int numReactors = std::thread::hardware_concurrency();
+    if(numReactors == 0) numReactors = 4;
 
-    logLine("Listening on port 8080 with " + std::to_string(numThreads) + " worker threads");
+    std::vector<std::unique_ptr<EpollReactor>> reactors;
+    reactors.reserve(numReactors);
+    for(unsigned int i = 0; i < numReactors; i++){
+        reactors.push_back(std::make_unique<EpollReactor>());
+    }
 
+    logLine("Listening on port 8080 with " + std::to_string(numReactors) + " epoll reactor threads");
+
+    // accept() itself still blocks — that's fine, there's nothing else for this
+    // thread to do while no connection is pending. The blocking I/O this
+    // replaces was per-connection recv()/send() inside the request handler,
+    // which is now entirely non-blocking and multiplexed via epoll below.
+    size_t nextReactor = 0;
     while(true){
         int clientFd = acceptConnection(serverSocket);
         if(clientFd == -1){
             continue;
         }
-        pool.enqueue(clientFd);
+        reactors[nextReactor]->enqueue(clientFd);
+        nextReactor = (nextReactor + 1) % reactors.size();
     }
 }

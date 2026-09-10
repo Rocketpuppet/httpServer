@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <cctype>
+#include <cerrno>
 #include <string>
 
 enum class parseState{ // Acts like a DFA, if there is an malformed request we can put the parser into error state.
@@ -29,13 +30,19 @@ class httpParser{
     size_t parsedUpTo = 0;
     size_t bodyBytesNeeded = 0;
 
-    // Returns bytes read (>0), 0 if the peer closed the connection, or -1 on
-    // a socket error (state is set to error in that case).
-    int feed(int targetFd, httpRequest& req){ 
+    // Returns bytes read (>0), 0 if the peer closed the connection, -1 on a
+    // real socket error (state is set to error), -2 if Content-Length exceeds
+    // the max allowed body size, or -3 if targetFd is non-blocking and has no
+    // data available right now — not an error, the caller should wait for the
+    // next epoll readiness notification and call feed() again then.
+    int feed(int targetFd, httpRequest& req){
 
         char tempBuffer[8192];
         int ret = recv(targetFd, tempBuffer, sizeof(tempBuffer), 0); // recv() returns the number of bytes recevied.
         if(ret==-1){
+            if(errno == EAGAIN || errno == EWOULDBLOCK){
+                return -3;
+            }
             this->state = parseState::error;
             return -1;
         }
@@ -147,11 +154,8 @@ class httpParser{
     }
 };
 
-// Handles one accepted connection end-to-end (read request, respond, close).
-// Runs on a ThreadPool worker thread; all state it touches (the parser, the
-// request) is local to the call, so no locking is needed here.
-void handleConnection(int clientFd);
-
 std::string processHttpRequest(const httpRequest& req, const httpParser& parser);
+std::string buildResponse(int statusCode, const std::string& statusText, const std::string& body, const std::string& contentType = "text/plain");
+void logLine(const std::string& line);
 
 int main();
