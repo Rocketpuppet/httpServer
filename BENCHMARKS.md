@@ -25,13 +25,13 @@ against the earlier bounded-thread-pool design it replaced (commit `da6b53b`).
 | 5000 | 103.7k | — | avg 17ms, max 1.7s | 0 |
 
 **Throughput ceiling is ~100-105k req/s**, reached around c=200 and flat all
-the way out to c=5000. Confirmed this is a genuine system ceiling and not a
+the way out to c=5000. This is a genuine system ceiling and not a
 client-side artifact by running two `wrk` processes in parallel — combined
 throughput was still ~106k req/s, not roughly double.
 
 **Root cause of the ceiling** (`top` sampled during a c=1000 run): 49% system
 time + 24% softirq vs. only 7% userspace. The bottleneck is kernel-side TCP
-connection setup/teardown, not the request-handling code — the server has no
+connection setup/teardown, not the request-handling code. The server has no
 HTTP keep-alive, so *every single request* pays a full handshake + 4-way
 close. TIME_WAIT sockets hit 13k+ within 3 seconds at c=1000
 (`tcp_tw_reuse=2` on loopback is why this doesn't turn into ephemeral-port
@@ -39,7 +39,7 @@ exhaustion errors).
 
 **Server resource footprint stayed flat** — 13 OS threads (1 main + 12
 reactors), ~30 file descriptors — across the entire range from c=10 to
-c=5000. This is the measured payoff of the epoll rewrite: connection count
+c=5000. This is the result of implmeneting epoll alongside multi-threading: connection count
 and thread count are decoupled.
 
 **POST body size changes which ceiling you hit:**
@@ -66,7 +66,7 @@ one connection at a time.
 | Epoll version | <10ms |
 
 With only 12 workers, 50 stalled clients exhaust the entire pool; any new
-request — no matter how trivial — queues behind them until a worker frees up.
+request queues behind them until a worker frees up.
 The epoll version has no such ceiling on simultaneous connections, since one
 reactor thread can multiplex many idle/slow connections without blocking on
 any single one.
@@ -80,14 +80,11 @@ the same for both architectures:**
 | 200 | 101.3k | 96.6k |
 | 1000 | 92.0k | 100.3k |
 
-This is the honest conclusion, not the oversold one: **epoll's win here is
+From this data it can be conculded: **epoll's win here is
 connection scalability and isolation under adverse conditions, not raw
 throughput.** Neither architecture has HTTP keep-alive, so both pay the same
 kernel-level TCP setup/teardown cost per request — that shared bottleneck is
-what caps throughput in both cases. Adding keep-alive (persistent
-connections) is the next highest-leverage change if raw req/s is the goal;
-it would benefit both designs equally, because it isn't the bottleneck epoll
-addresses.
+what caps throughput in both cases.
 
 ## Reproducing these numbers
 
