@@ -6,7 +6,7 @@ against the earlier bounded-thread-pool design it replaced (commit `da6b53b`).
 ## Test environment
 
 - WSL2 Ubuntu, 12 logical cores, 7.7GB RAM
-- Client (`wrk`) and server run on the same machine over loopback — these are
+- Client (`wrk`) and server run on the same machine over loopback these are
   dev-box numbers, not isolated-hardware numbers, and the client process
   itself consumes real CPU generating load
 - Built with optimizations on: `g++ -std=c++17 -Wall -Wextra -pthread -O2`
