@@ -26,7 +26,7 @@ against the earlier bounded-thread-pool design it replaced (commit `da6b53b`).
 
 **Throughput ceiling is ~100-105k req/s**, reached around c=200 and flat all
 the way out to c=5000. This is a genuine system ceiling and not a
-client-side artifact by running two `wrk` processes in parallel — combined
+client-side artifact by running two `wrk` processes in parallel combined
 throughput was still ~106k req/s, not roughly double.
 
 **Root cause of the ceiling** (`top` sampled during a c=1000 run): 49% system
@@ -38,7 +38,7 @@ close. TIME_WAIT sockets hit 13k+ within 3 seconds at c=1000
 exhaustion errors).
 
 **Server resource footprint stayed flat** — 13 OS threads (1 main + 12
-reactors), ~30 file descriptors — across the entire range from c=10 to
+reactors), ~30 file descriptors across the entire range from c=10 to
 c=5000. This is the result of implmeneting epoll alongside multi-threading: connection count
 and thread count are decoupled.
 
@@ -83,7 +83,7 @@ the same for both architectures:**
 From this data it can be conculded: **epoll's win here is
 connection scalability and isolation under adverse conditions, not raw
 throughput.** Neither architecture has HTTP keep-alive, so both pay the same
-kernel-level TCP setup/teardown cost per request — that shared bottleneck is
+kernel-level TCP setup/teardown cost per request that shared bottleneck is
 what caps throughput in both cases.
 
 ## Reproducing these numbers
