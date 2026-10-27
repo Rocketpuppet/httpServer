@@ -45,6 +45,11 @@ std::string processHttpRequest(const httpRequest& req, const httpParser& parser)
         if(endpoint == "/"){
             return buildResponse(200, "OK", "Hello, World!\n");
         }
+        
+        if(endpoint == "health"){
+            return buildResponse(200, "yippe", "Hello, World!\n");
+        }
+        
         return buildResponse(404, "Not Found", "Not Found\n");
     }
 
